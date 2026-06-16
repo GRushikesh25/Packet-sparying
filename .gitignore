@@ -1,0 +1,7 @@
+.claude/
+*.pyc
+__pycache__/
+*.o
+*.d
+ns-allinone-*/
+*.pcap
