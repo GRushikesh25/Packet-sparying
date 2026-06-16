@@ -1,0 +1,48 @@
+# -*- Mode: python; py-indent-offset: 4; indent-tabs-mode: nil; coding: utf-8; -*-
+#
+# wscript for the dcn-spray NS-3 module.
+#
+# This module bundles three sub-libraries:
+#   packet-spraying/  — SprayRouting protocol + ElephantTag + helper
+#   topologies/       — FatTreeBuilder, SpineLeafBuilder
+#   traffic/          — FlowManager
+#
+# When assembled into NS-3 the entire src/ tree is copied to
+# ns3/src/dcn-spray/ so relative sub-paths below are correct.
+
+def build(bld):
+    module = bld.create_ns3_module(
+        'dcn-spray',
+        ['core', 'network', 'internet', 'point-to-point',
+         'applications', 'flow-monitor']
+    )
+
+    module.source = [
+        # packet-spraying sub-dir
+        'packet-spraying/elephant-tag.cc',
+        'packet-spraying/spray-routing.cc',
+        'packet-spraying/spray-routing-helper.cc',
+        # topologies sub-dir
+        'topologies/fat-tree-builder.cc',
+        'topologies/spine-leaf-builder.cc',
+        # traffic sub-dir
+        'traffic/flow-manager.cc',
+    ]
+
+    headers = bld(features='ns3header')
+    headers.module = 'dcn-spray'
+    headers.source = [
+        # packet-spraying sub-dir
+        'packet-spraying/elephant-tag.h',
+        'packet-spraying/spray-routing.h',
+        'packet-spraying/spray-routing-helper.h',
+        # topologies sub-dir
+        'topologies/fat-tree-builder.h',
+        'topologies/spine-leaf-builder.h',
+        # traffic sub-dir
+        'traffic/flow-manager.h',
+    ]
+
+    if bld.env.ENABLE_TESTS:
+        module_test = bld.create_ns3_module_test_library('dcn-spray')
+        module_test.source = []

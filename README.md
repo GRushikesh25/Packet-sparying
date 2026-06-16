@@ -1,4 +1,4 @@
-# Packet Spraying of Elephant Flows
+# DCN_1b — Packet Spraying of Elephant Flows
 ### NS-3 Simulation — Fat-Tree & Spine-Leaf Data-Centre Topologies
 
 **Course project** comparing **ECMP** vs **Packet Spraying** for handling elephant
@@ -20,9 +20,10 @@ bash run.sh
 That single script:
 1. Checks your system has `g++`, `python3`, `cmake`, `ninja`, `wget`
 2. Downloads NS-3.40 (~90 MB, one-time)
-3. Installs the custom routing module and builds NS-3 (~10 min first run)
-4. Runs all 4 simulation scenarios
-5. Generates comparison plots in `results/`
+3. Assembles the `dcn-spray` NS-3 module from `src/` and builds NS-3 (~10 min first run)
+4. Copies `simulations/*.cc` to NS-3 scratch/
+5. Runs all 4 simulation scenarios
+6. Generates comparison plots in `results/`
 
 **After the first run, re-running takes ~1 minute** (NS-3 is already built).
 
@@ -149,15 +150,32 @@ link becomes a bottleneck for elephant traffic.
 
 ---
 
+## Repository Layout (DCN_1b)
+
+```
+DCN_1b/
+├── src/
+│   ├── packet-spraying/    spray-routing.h/.cc, elephant-tag.h/.cc,
+│   │                       spray-routing-helper.h/.cc, wscript
+│   ├── topologies/         fat-tree-builder.h/.cc, spine-leaf-builder.h/.cc
+│   └── traffic/            flow-manager.h/.cc
+├── simulations/            fat-tree-simulation.cc, spine-leaf-simulation.cc
+├── scripts/                analyze.py, run-simulations.sh, run-single.sh
+├── results/                (generated: XML + PNG)
+├── docs/                   design.md
+├── run.sh                  One-command setup + run
+└── README.md
+```
+
 ## Source Code Walkthrough
 
-### `src/spray-routing/` — Custom NS-3 Module
+### `src/packet-spraying/` — Custom NS-3 Module
 
-#### `model/elephant-tag.h/.cc`
+#### `elephant-tag.h/.cc`
 A 4-byte `PacketTag` that gets attached to each packet of an elephant flow.
 The routing layer reads this tag to decide spray vs hash.
 
-#### `model/spray-routing.h/.cc`
+#### `spray-routing.h/.cc`
 The core contribution — a complete `Ipv4RoutingProtocol` implementation:
 
 ```
@@ -176,7 +194,7 @@ RouteInput() [called when forwarding at intermediate switches]:
   └── Same logic, then calls ucb(route, packet, header)
 ```
 
-#### `helper/spray-routing-helper.h/.cc`
+#### `spray-routing-helper.h/.cc`
 Integrates `SprayRouting` with NS-3's `InternetStackHelper` so it can be
 installed on nodes with one line:
 ```cpp
@@ -185,24 +203,38 @@ internet.SetRoutingHelper(sh);
 internet.Install(allNodes);
 ```
 
-### `scratch/fat-tree-simulation.cc`
-1. **Creates nodes**: core, aggregation, edge, host nodes
-2. **Creates links**: `PointToPointHelper` with proper capacities
-3. **Assigns IPs**: /30 subnets from a 10.x.y.0 address pool
-4. **Sets up routes**: manually populates routing tables on every switch
-5. **Installs flows**:
-   - `BulkSendApplication` (TCP, 50 MB) → elephant flows
-   - `OnOffApplication` (UDP, 512 B packets) → mouse flows
-6. **FlowMonitor**: collects per-flow statistics → saves XML
+### `src/topologies/`
 
-### `scratch/spine-leaf-simulation.cc`
-Same structure as Fat-Tree simulation, adapted for Spine-Leaf topology.
+#### `fat-tree-builder.h/.cc` — `FatTreeBuilder`
+Encapsulates the full Fat-Tree construction: node creation, link wiring, IP
+assignment and routing-table population. `Build(addr)` takes an
+`Ipv4AddressHelper`; afterwards `GetHosts()` and `GetHostAddresses()` expose
+the flat host list to the simulation.
+
+#### `spine-leaf-builder.h/.cc` — `SpineLeafBuilder`
+Same pattern for a Spine-Leaf (2-tier Clos) topology.
+
+### `src/traffic/flow-manager.h/.cc` — `FlowManager`
+Installs `BulkSendApplication` elephant flows (TCP, 50 MB) and `OnOffApplication`
+mouse flows (UDP, 512 B, 10 Mbps), plus `PacketSink` on every host.
+
+### `simulations/fat-tree-simulation.cc`
+Short `main()` (~110 lines):
+1. Parse command-line arguments
+2. `FatTreeBuilder::Build()`
+3. `FlowManager::InstallSinks()` + `InstallElephantFlows()` + `InstallMouseFlows()`
+4. Run FlowMonitor, save XML to `results/fat-tree-{routing}-flowmon.xml`
+
+### `simulations/spine-leaf-simulation.cc`
+Same pattern using `SpineLeafBuilder`.
 
 ### `scripts/analyze.py`
 - Parses FlowMonitor XML using Python's `xml.etree.ElementTree`
 - Classifies flows as elephant (rxBytes ≥ 1 MB) or mouse
 - Computes: throughput (Mbps), FCT (seconds), avg delay (ms), loss rate
 - Generates 5 matplotlib comparison plots
+
+See `docs/design.md` for a detailed design document.
 
 ---
 

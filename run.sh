@@ -1,20 +1,27 @@
 #!/usr/bin/env bash
-# run.sh — One-command setup and execution for evaluators.
+# run.sh — One-command setup and execution for DCN_1b.
+#
+# Project: Packet Spraying vs ECMP on Fat-Tree & Spine-Leaf topologies
+#          implemented as an NS-3 C++ simulation.
 #
 # Usage:
 #   bash run.sh
 #
-# This script will:
-#   1. Check system dependencies
-#   2. Download NS-3.40 (if not already downloaded)
-#   3. Install the custom spray-routing module
-#   4. Build NS-3
-#   5. Run all 4 simulations (Fat-Tree ECMP, Fat-Tree Spray,
-#                             Spine-Leaf ECMP, Spine-Leaf Spray)
-#   6. Parse results and generate comparison plots
+# What this script does:
+#   1. Check system dependencies (g++, python3, cmake, ninja, wget, tar)
+#   2. Download NS-3.40 (~90 MB) if not already present
+#   3. Assemble the dcn-spray NS-3 module:
+#        src/  ->  ns3/src/dcn-spray/
+#        (packet-spraying/, topologies/, traffic/ sub-dirs preserved)
+#        src/packet-spraying/wscript  ->  ns3/src/dcn-spray/wscript
+#   4. Copy simulations/*.cc -> ns3/scratch/
+#   5. Build NS-3 (one-time ~10 min; incremental afterwards)
+#   6. Run all 4 scenarios:
+#        fat-tree   ecmp  |  fat-tree   spray
+#        spine-leaf ecmp  |  spine-leaf spray
+#   7. Call scripts/analyze.py to generate comparison plots
 #
-# Total time: ~10–15 minutes (mostly NS-3 build, one-time only)
-# Subsequent runs (after NS-3 is built): ~1–2 minutes
+# Total time: ~10-15 min first run, ~1-2 min subsequent runs.
 
 set -euo pipefail
 
@@ -37,7 +44,7 @@ banner()  { echo -e "\n${BOLD}$*${RESET}"; echo "$(printf '─%.0s' {1..60})"; }
 # ── Header ────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}║   Packet Spraying of Elephant Flows — NS-3 Simulation   ║${RESET}"
+echo -e "${BOLD}║   DCN_1b — Packet Spraying of Elephant Flows (NS-3)     ║${RESET}"
 echo -e "${BOLD}║   Fat-Tree & Spine-Leaf Topologies  |  ECMP vs Spray    ║${RESET}"
 echo -e "${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}"
 echo ""
@@ -89,30 +96,42 @@ else
     success "NS-3 ${NS3_VERSION} already present."
 fi
 
-# ── Step 3: Install spray-routing module ──────────────────────────────
-banner "Step 3/6 — Installing custom spray-routing module"
+# ── Step 3: Assemble dcn-spray NS-3 module ────────────────────────────
+banner "Step 3/6 — Installing dcn-spray module into NS-3"
 
-SPRAY_DST="${NS3_DIR}/src/spray-routing"
-rm -rf "${SPRAY_DST}"
-cp -r "${REPO_DIR}/src/spray-routing" "${SPRAY_DST}"
-success "spray-routing module installed to ${SPRAY_DST}"
+DCN_DST="${NS3_DIR}/src/dcn-spray"
+rm -rf "${DCN_DST}"
+mkdir -p "${DCN_DST}"
+
+# Copy entire src/ tree (packet-spraying/, topologies/, traffic/)
+cp -r "${REPO_DIR}/src/." "${DCN_DST}/"
+
+# Place the module wscript at the module root
+cp "${REPO_DIR}/src/packet-spraying/wscript" "${DCN_DST}/wscript"
+
+success "dcn-spray module assembled at ${DCN_DST}"
+info "  Sub-directories:"
+ls "${DCN_DST}/" | sed 's/^/    /'
 
 # ── Step 4: Copy simulation scripts ───────────────────────────────────
-banner "Step 4/6 — Copying simulation scripts"
+banner "Step 4/6 — Copying simulation scripts to NS-3 scratch/"
 
-cp "${REPO_DIR}/scratch/fat-tree-simulation.cc"   "${NS3_DIR}/scratch/"
-cp "${REPO_DIR}/scratch/spine-leaf-simulation.cc" "${NS3_DIR}/scratch/"
-mkdir -p "${NS3_DIR}/results"
-ln -sfn "${RESULTS}" "${NS3_DIR}/results" 2>/dev/null || true
+cp "${REPO_DIR}/simulations/fat-tree-simulation.cc"   "${NS3_DIR}/scratch/"
+cp "${REPO_DIR}/simulations/spine-leaf-simulation.cc" "${NS3_DIR}/scratch/"
+
 mkdir -p "${RESULTS}"
+# Symlink results dir so NS-3 can write XML files there
+ln -sfn "${RESULTS}" "${NS3_DIR}/results" 2>/dev/null || \
+    { rm -f "${NS3_DIR}/results" && ln -s "${RESULTS}" "${NS3_DIR}/results"; }
+
 success "Scripts copied to NS-3 scratch/"
 
 # ── Step 5: Build NS-3 ────────────────────────────────────────────────
-banner "Step 5/6 — Building NS-3 (this takes ~10 min the first time)"
+banner "Step 5/6 — Building NS-3 (first run ~10 min)"
 
 cd "${NS3_DIR}"
 
-BUILD_MARKER=".packet_spray_built"
+BUILD_MARKER=".dcn_spray_built"
 if [ ! -f "${BUILD_MARKER}" ]; then
     info "Configuring NS-3..."
     python3 ns3 configure --enable-examples --disable-python \
@@ -129,7 +148,7 @@ else
 fi
 
 # ── Step 6: Run simulations ───────────────────────────────────────────
-banner "Step 6/6 — Running simulations"
+banner "Step 6/6 — Running all 4 scenarios"
 
 run_sim() {
     local label="$1"; local script="$2"; local args="$3"
@@ -146,7 +165,7 @@ run_sim "Fat-Tree ECMP" \
     "fat-tree-simulation" \
     "--k=4 --routing=ecmp --simTime=5 --elephants=10 --mice=40 --seed=1 --flowmon=true"
 
-run_sim "Fat-Tree Packet Spray" \
+run_sim "Fat-Tree Spray" \
     "fat-tree-simulation" \
     "--k=4 --routing=spray --simTime=5 --elephants=10 --mice=40 --seed=1 --flowmon=true"
 
@@ -154,7 +173,7 @@ run_sim "Spine-Leaf ECMP" \
     "spine-leaf-simulation" \
     "--numSpine=4 --numLeaf=8 --hostsPerLeaf=4 --routing=ecmp --simTime=5 --elephants=10 --mice=40 --seed=1 --flowmon=true"
 
-run_sim "Spine-Leaf Packet Spray" \
+run_sim "Spine-Leaf Spray" \
     "spine-leaf-simulation" \
     "--numSpine=4 --numLeaf=8 --hostsPerLeaf=4 --routing=spray --simTime=5 --elephants=10 --mice=40 --seed=1 --flowmon=true"
 
